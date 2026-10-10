@@ -1016,7 +1016,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 	void __user *uvalue = u64_to_user_ptr(attr->value);
 	int ufd = attr->map_fd;
 	struct bpf_map *map;
-	void *key, *value, *ptr;
+	void *key, *value;
 	u8 key_onstack[SZ_16] __aligned(sizeof(long));
 	u8 value_onstack[SZ_64] __aligned(sizeof(long));
 	u32 value_size;
