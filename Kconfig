@@ -29,6 +29,6 @@ source "lib/Kconfig"
 
 source "lib/Kconfig.debug"
 
-source "kernel/KernelSU/Kconfig"
+source "kernel/KernelSU/kernel/Kconfig"
 
 source "Documentation/Kconfig"
