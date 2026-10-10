@@ -36,11 +36,19 @@ jobs:
             cpio zstd zip wget kmod
           df -h | tail -1
 
+      - name: Cache AOSP clang
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: clang-r547379
+
       - name: Download AOSP clang
         run: |
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz
-          tar -xf clang-r547379.tar.gz
-          rm -f clang-r547379.tar.gz
+          if [ ! -x bin/clang ]; then
+            wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz
+            tar -xf clang-r547379.tar.gz
+            rm -f clang-r547379.tar.gz
+          fi
           ls bin/clang bin/ld.lld lib/LLVMPolly.so
 
       - name: Configure kernel
@@ -52,8 +60,6 @@ jobs:
         run: |
           export PATH="$GITHUB_WORKSPACE/bin:$PATH"
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- -j$(nproc)
-        env:
-          PATH: ${{ github.workspace }}/bin:$PATH
 
       - name: Locate build outputs
         id: outputs
