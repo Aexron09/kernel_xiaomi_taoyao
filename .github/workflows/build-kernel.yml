@@ -34,41 +34,45 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq python3 bc bison flex libssl-dev libelf-dev \
-            cpio zstd zip wget kmod
+            cpio zstd zip wget kmod gcc g++ make
           df -h | tail -1
 
       - name: Restore AOSP clang cache
         id: clangcache
         uses: actions/cache/restore@v4
         with:
-          path: bin
-          key: clang-r547379
+          # Cache the WHOLE toolchain (clang/): bin/ alone is not enough,
+          # clang also needs lib/clang/*/include (stddef.h) and lib/LLVMPolly.so.
+          path: clang
+          key: clang-r547379-v2
 
       - name: Download AOSP clang (cache miss only)
         if: steps.clangcache.outputs.cache-hit != 'true'
         run: |
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz
-          tar -xf clang-r547379.tar.gz
-          rm -f clang-r547379.tar.gz
-          ls bin/clang bin/ld.lld lib/LLVMPolly.so
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -O clang.tar.gz
+          mkdir -p clang
+          tar -xf clang.tar.gz -C clang
+          rm -f clang.tar.gz
+          ls clang/bin/clang clang/bin/ld.lld clang/lib/LLVMPolly.so
+          ls clang/lib/clang/*/include/stddef.h
 
       - name: Persist toolchain cache even if build fails
         if: steps.clangcache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: bin
-          key: clang-r547379
+          path: clang
+          key: clang-r547379-v2
 
       - name: Configure kernel
         run: |
-          export PATH="$GITHUB_WORKSPACE/bin:$PATH"
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- taoyao_defconfig
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=gcc HOSTCXX=g++ CLANG_TRIPLE=aarch64-linux-gnu- taoyao_defconfig
 
       - name: Build kernel
         run: |
-          export PATH="$GITHUB_WORKSPACE/bin:$PATH"
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- -j$(nproc)
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=gcc HOSTCXX=g++ CLANG_TRIPLE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Locate build outputs
         id: outputs
