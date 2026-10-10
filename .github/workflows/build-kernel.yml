@@ -1,0 +1,108 @@
+name: Build taoyao kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [lineage-23.2]
+    paths:
+      - 'drivers/**'
+      - 'arch/**'
+      - 'kernel/**'
+      - 'techpack/**'
+      - 'Kconfig'
+      - '.gitmodules'
+      - 'Makefile'
+      - '.github/workflows/build-kernel.yml'
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Shallow clone: we only need the working tree, not full history.
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3 bc bison flex libssl-dev libelf-dev \
+            cpio zstd zip wget kmod gcc g++ make
+          df -h | tail -1
+
+      - name: Restore AOSP clang cache
+        id: clangcache
+        uses: actions/cache/restore@v4
+        with:
+          # Cache the WHOLE toolchain (clang/): bin/ alone is not enough,
+          # clang also needs lib/clang/*/include (stddef.h) and lib/LLVMPolly.so.
+          path: clang
+          key: clang-r547379-v2
+
+      - name: Download AOSP clang (cache miss only)
+        if: steps.clangcache.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -O clang.tar.gz
+          mkdir -p clang
+          tar -xf clang.tar.gz -C clang
+          rm -f clang.tar.gz
+          ls clang/bin/clang clang/bin/ld.lld clang/lib/LLVMPolly.so
+          ls clang/lib/clang/*/include/stddef.h
+
+      - name: Persist toolchain cache even if build fails
+        if: steps.clangcache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: clang
+          key: clang-r547379-v2
+
+      - name: Configure kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=gcc HOSTCXX=g++ CLANG_TRIPLE=aarch64-linux-gnu- taoyao_defconfig
+
+      - name: Build kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=gcc HOSTCXX=g++ CLANG_TRIPLE=aarch64-linux-gnu- -j$(nproc)
+
+      - name: Locate build outputs
+        id: outputs
+        run: |
+          echo "IMG=$(find out -type f -path '*boot/Image' | head -1)" | tee -a $GITHUB_ENV
+          echo "DTBO=$(find out -type f -name 'dtbo.img' | head -1)" | tee -a $GITHUB_ENV
+          echo "DTB=$(find out -type f -name 'yupik.dtb' | head -1)" | tee -a $GITHUB_ENV
+          ls -lh $IMG $DTBO $DTB
+
+      - name: Package AnyKernel3 zip
+        run: |
+          rm -rf /tmp/ak3 && mkdir -p /tmp/ak3
+          python3 - <<'EOF'
+          import zipfile
+          z = zipfile.ZipFile('arunika/taoyao-xxksu-0810-fixed-v2.zip')
+          for n in z.namelist():
+              z.extract(n, '/tmp/ak3')
+          EOF
+          cp -v "${IMG}"  /tmp/ak3/Image
+          cp -v "${DTBO}" /tmp/ak3/dtbo.img
+          cp -v "${DTB}"  /tmp/ak3/dtb
+          chmod +x /tmp/ak3/tools/*
+          (cd /tmp/ak3 && zip -r -q -9 /tmp/taoyao-lineage-ksu.zip .)
+          ls -lh /tmp/taoyao-lineage-ksu.zip
+
+      - name: Upload flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: taoyao-lineage-ksu
+          path: |
+            /tmp/taoyao-lineage-ksu.zip
+            out/.config
+          retention-days: 14
