@@ -36,20 +36,28 @@ jobs:
             cpio zstd zip wget kmod
           df -h | tail -1
 
-      - name: Cache AOSP clang
-        uses: actions/cache@v4
+      - name: Restore AOSP clang cache
+        id: clangcache
+        uses: actions/cache/restore@v4
         with:
           path: bin
           key: clang-r547379
 
-      - name: Download AOSP clang
+      - name: Download AOSP clang (cache miss only)
+        if: steps.clangcache.outputs.cache-hit != 'true'
         run: |
-          if [ ! -x bin/clang ]; then
-            wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz
-            tar -xf clang-r547379.tar.gz
-            rm -f clang-r547379.tar.gz
-          fi
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz
+          tar -xf clang-r547379.tar.gz
+          rm -f clang-r547379.tar.gz
           ls bin/clang bin/ld.lld lib/LLVMPolly.so
+
+      - name: Persist toolchain cache even if build fails
+        if: steps.clangcache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: bin
+          key: clang-r547379
 
       - name: Configure kernel
         run: |
