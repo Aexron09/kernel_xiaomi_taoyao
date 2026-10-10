@@ -7,8 +7,10 @@ on:
     paths:
       - 'drivers/**'
       - 'arch/**'
-      - 'kernel/KernelSU/**'
+      - 'kernel/**'
       - 'techpack/**'
+      - 'Kconfig'
+      - '.gitmodules'
       - 'Makefile'
       - '.github/workflows/build-kernel.yml'
 
