@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Shallow clone: we only need the working tree, not full history.
           fetch-depth: 1
@@ -39,7 +39,7 @@ jobs:
 
       - name: Restore AOSP clang cache
         id: clangcache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           # Cache the WHOLE toolchain (clang/): bin/ alone is not enough,
           # clang also needs lib/clang/*/include (stddef.h) and lib/LLVMPolly.so.
@@ -59,7 +59,7 @@ jobs:
       - name: Persist toolchain cache even if build fails
         if: steps.clangcache.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: clang
           key: clang-r547379-v2
@@ -99,7 +99,7 @@ jobs:
           ls -lh /tmp/taoyao-lineage-ksu.zip
 
       - name: Upload flashable zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: taoyao-lineage-ksu
           path: |
