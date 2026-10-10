@@ -26,8 +26,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          persist-credentials: true
+          # Shallow clone: we only need the working tree, not full history.
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Install build deps
         run: |
