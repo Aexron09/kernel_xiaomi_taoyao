@@ -452,6 +452,7 @@ struct battery_chg_dev {
 	u32				*thermal_levels;
 	const char			*wls_fw_name;
 	int				curr_thermal_level;
+	int				curr_wlsthermal_level;
 	int				num_thermal_levels;
 	atomic_t			state;
 	struct work_struct		subsys_up_work;
@@ -1051,9 +1052,7 @@ static void handle_message(struct battery_chg_dev *bcdev, void *data,
 
 		break;
 	case BC_SET_NOTIFY_REQ:
-	case BC_SHUTDOWN_NOTIFY:
-	case BC_SHIP_MODE_REQ_SET:
-		/* Always ACK response for notify or ship_mode request */
+		/* Always ACK response for notify request */
 		ack_set = true;
 		break;
 	case BC_WLS_FW_CHECK_UPDATE:
@@ -1672,6 +1671,8 @@ static int battery_psy_set_charge_current(struct battery_chg_dev *bcdev,
 {
 	int rc;
 //	u32 fcc_ua, prev_fcc_ua;
+	if(val == bcdev->curr_thermal_level)
+	      return 0;
 	pr_err("set thermal-level: %d num_thermal_levels: %d \n", val, bcdev->num_thermal_levels);
 
 	if (!bcdev->num_thermal_levels)
@@ -4030,6 +4031,9 @@ static ssize_t wlscharge_control_limit_store(struct class *c,
 	if (kstrtoint(buf, 10, &val))
 		return -EINVAL;
 
+	if(val == bcdev->curr_wlsthermal_level)
+		  return count;
+
 	pr_err("set thermal-level: %d num_thermal_levels: %d \n", val, bcdev->num_thermal_levels);
 
 	if (bcdev->num_thermal_levels <= 0) {
@@ -4044,6 +4048,8 @@ static ssize_t wlscharge_control_limit_store(struct class *c,
 				XM_PROP_WLSCHARGE_CONTROL_LIMIT, val);
 	if (rc < 0)
 		return rc;
+
+	bcdev->curr_wlsthermal_level = val;
 
 	return count;
 }
@@ -4981,7 +4987,7 @@ static ssize_t typec_mode_show(struct class *c,
 	int rc;
 
 	rc = read_property_id(bcdev, pst, XM_PROP_TYPEC_MODE);
-	if (rc < 0)
+	if (rc < 0 || pst->prop[XM_PROP_TYPEC_MODE] > 9 || pst->prop[XM_PROP_TYPEC_MODE] < 0)
 		return rc;
 
 	return scnprintf(buf, PAGE_SIZE, "%s\n", power_supply_usbc_text[pst->prop[XM_PROP_TYPEC_MODE]]);
@@ -5508,18 +5514,20 @@ static void generate_xm_charge_uvent(struct work_struct *work)
 		"POWER_SUPPLY_SOC_DECIMAL=\n",	//length=31+8
 		"POWER_SUPPLY_SOC_DECIMAL_RATE=\n",	//length=31+8
 		"POWER_SUPPLY_SHUTDOWN_DELAY=\n",//28+8
+		"POWER_SUPPLY_VBUS_DISABLE=\n",//length=26+1
 	};
 	static char *envp[] = {
 		uevent_string[0],
 		uevent_string[1],
 		uevent_string[2],
-#if defined(CONFIG_MI_WIRELESS)
 		uevent_string[3],
+#if defined(CONFIG_MI_WIRELESS)
 		uevent_string[4],
 		uevent_string[5],
 		uevent_string[6],
 		uevent_string[7],
 		uevent_string[8],
+		uevent_string[9],
 #endif
 		NULL,
 
@@ -5559,8 +5567,11 @@ static void generate_xm_charge_uvent(struct work_struct *work)
 	shutdown_delay_show( &(bcdev->battery_class), NULL, prop_buf);
 	strncpy( uevent_string[8]+28, prop_buf,MAX_UEVENT_LENGTH-28);
 
-	dev_err(bcdev->dev,"uevent test : %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
-			envp[0], envp[1], envp[2], envp[3], envp[4],envp[5], envp[6],envp[7],envp[8]);
+	vbus_disable_show( &(bcdev->battery_class), NULL, prop_buf);
+	strncpy( uevent_string[9]+26, prop_buf,MAX_UEVENT_LENGTH-26);
+
+	dev_err(bcdev->dev,"uevent test : %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
+			envp[0], envp[1], envp[2], envp[3], envp[4],envp[5], envp[6],envp[7],envp[8],envp[9]);
 #else
 	soc_decimal_show( &(bcdev->battery_class), NULL, prop_buf);
 	strncpy( uevent_string[0]+25, prop_buf,MAX_UEVENT_LENGTH-25);
@@ -5571,8 +5582,11 @@ static void generate_xm_charge_uvent(struct work_struct *work)
 	shutdown_delay_show( &(bcdev->battery_class), NULL, prop_buf);
 	strncpy( uevent_string[2]+28, prop_buf,MAX_UEVENT_LENGTH-28);
 
-	dev_err(bcdev->dev,"uevent test : %s\n %s\n %s\n",
-			envp[0], envp[1], envp[2]);
+	vbus_disable_show( &(bcdev->battery_class), NULL, prop_buf);
+	strncpy( uevent_string[3]+26, prop_buf,MAX_UEVENT_LENGTH-26);
+
+	dev_err(bcdev->dev,"uevent test : %s\n %s\n %s\n %s\n",
+			envp[0], envp[1], envp[2],envp[3]);
 #endif
 
 	/*add our prop end*/
@@ -5583,7 +5597,7 @@ static void generate_xm_charge_uvent(struct work_struct *work)
 	return;
 }
 
-#define CHARGING_PERIOD_S		30
+#define CHARGING_PERIOD_S		60
 #define DISCHARGE_PERIOD_S		300
 
 static void xm_charger_debug_info_print_work(struct work_struct *work)
@@ -5709,6 +5723,7 @@ static int fb_notifier_callback(struct notifier_block *nb,
 						     fb_notifier);
 	struct mi_disp_notifier *evdata = data;
 	unsigned int blank;
+	int rc;
 
 	if(val != MI_DISP_DPMS_EVENT)
 		return NOTIFY_OK;
@@ -5724,7 +5739,10 @@ static int fb_notifier_callback(struct notifier_block *nb,
 			bcdev->blank_state = FB_UNBLANK;
 		}
 
-		schedule_work(&bcdev->fb_notifier_work);
+		rc = write_property_id(bcdev, &bcdev->psy_list[PSY_TYPE_XM],
+				XM_PROP_FB_BLANK_STATE, bcdev->blank_state);
+		if (rc < 0)
+			return rc;
 	}
 	return NOTIFY_OK;
 }
