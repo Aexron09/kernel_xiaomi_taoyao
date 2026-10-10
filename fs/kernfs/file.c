@@ -284,7 +284,7 @@ static ssize_t kernfs_fop_write(struct file *file, const char __user *user_buf,
 	struct kernfs_open_file *of = kernfs_of(file);
 	const struct kernfs_ops *ops;
 	ssize_t len;
-	char buf_onstack[SZ_4K + 1] __aligned(sizeof(long));
+	char buf_onstack[SZ_512 + 1] __aligned(sizeof(long));
 	char *buf;
 
 	if (of->atomic_write_len) {
