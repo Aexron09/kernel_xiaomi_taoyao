@@ -1,3 +1,0 @@
-[submodule "kernel/KernelSU"]
-	path = kernel/KernelSU
-	url = https://github.com/KOWX712/KernelSU.git
