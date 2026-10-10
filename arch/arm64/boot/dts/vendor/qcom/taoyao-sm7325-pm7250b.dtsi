@@ -190,3 +190,7 @@ And public attribution of xiaomi platforms
 &qseecom_mem {
 	size = <0x0 0x2400000>;
 };
+
+&battery_charger {
+	mi,use-charge-counter-soc-calibration;
+};

@@ -481,6 +481,7 @@ struct battery_chg_dev {
 	bool				shutdown_delay_en;
 	bool				support_wireless_charge;
 	bool				support_2s_charging;
+	bool				use_charge_counter_soc_calib;
 	struct delayed_work		xm_prop_change_work;
 	struct delayed_work		charger_debug_info_print_work;
 	/* To track the driver initialization status */
@@ -1708,6 +1709,40 @@ static int battery_psy_set_charge_current(struct battery_chg_dev *bcdev,
 	return rc;
 }
 
+static int battery_soc_from_charge_counter(struct battery_chg_dev *bcdev,
+					      struct psy_state *pst,
+					      int fallback_soc)
+{
+	u32 charge_full, charge_counter;
+	int rc, calibrated_soc;
+
+	if (!bcdev->use_charge_counter_soc_calib)
+		return fallback_soc;
+
+	rc = read_property_id(bcdev, pst, BATT_CHG_FULL);
+	if (rc < 0)
+		return fallback_soc;
+
+	rc = read_property_id(bcdev, pst, BATT_CHG_COUNTER);
+	if (rc < 0)
+		return fallback_soc;
+
+	charge_full = pst->prop[BATT_CHG_FULL];
+	charge_counter = pst->prop[BATT_CHG_COUNTER];
+
+	if (!charge_full)
+		return fallback_soc;
+
+	/* Ignore obviously bogus values from fuel-gauge telemetry. */
+	if (charge_counter > (charge_full + (charge_full / 20)))
+		return fallback_soc;
+
+	calibrated_soc = DIV_ROUND_CLOSEST_ULL((u64)charge_counter * 100,
+					       charge_full);
+
+	return clamp_t(int, calibrated_soc, 0, 100);
+}
+
 static int battery_psy_get_prop(struct power_supply *psy,
 		enum power_supply_property prop,
 		union power_supply_propval *pval)
@@ -1743,6 +1778,8 @@ static int battery_psy_get_prop(struct power_supply *psy,
 #else
 		pval->intval = DIV_ROUND_CLOSEST(pst->prop[prop_id], 100);
 #endif
+		pval->intval = battery_soc_from_charge_counter(bcdev, pst,
+						      pval->intval);
 		/*if (IS_ENABLED(CONFIG_QTI_PMIC_GLINK_CLIENT_DEBUG) &&
 		   (bcdev->fake_soc >= 0 && bcdev->fake_soc <= 100))
 			pval->intval = bcdev->fake_soc;*/
@@ -5710,6 +5747,8 @@ static int battery_chg_parse_dt(struct battery_chg_dev *bcdev)
 
 	bcdev->support_wireless_charge = of_property_read_bool(node, "mi,support-wireless");
 	bcdev->support_2s_charging  = of_property_read_bool(node, "mi,support-2s-charging");
+	bcdev->use_charge_counter_soc_calib =
+		of_property_read_bool(node, "mi,use-charge-counter-soc-calibration");
 
 	return 0;
 }
