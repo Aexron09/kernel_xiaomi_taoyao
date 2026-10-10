@@ -1,0 +1,87 @@
+name: Build taoyao kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [lineage-23.2]
+    paths:
+      - 'drivers/**'
+      - 'arch/**'
+      - 'kernel/KernelSU/**'
+      - 'techpack/**'
+      - 'Makefile'
+      - '.github/workflows/build-kernel.yml'
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3 bc bison flex libssl-dev libelf-dev \
+            cpio zstd zip wget kmod
+          df -h | tail -1
+
+      - name: Download AOSP clang
+        run: |
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz
+          tar -xf clang-r547379.tar.gz
+          rm -f clang-r547379.tar.gz
+          ls bin/clang bin/ld.lld lib/LLVMPolly.so
+
+      - name: Configure kernel
+        run: |
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- taoyao_defconfig
+        env:
+          PATH: ${{ github.workspace }}/bin:$PATH
+
+      - name: Build kernel
+        run: |
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- -j$(nproc)
+        env:
+          PATH: ${{ github.workspace }}/bin:$PATH
+
+      - name: Locate build outputs
+        id: outputs
+        run: |
+          echo "IMG=$(find out -type f -path '*boot/Image' | head -1)" | tee -a $GITHUB_ENV
+          echo "DTBO=$(find out -type f -name 'dtbo.img' | head -1)" | tee -a $GITHUB_ENV
+          echo "DTB=$(find out -type f -name 'yupik.dtb' | head -1)" | tee -a $GITHUB_ENV
+          ls -lh $IMG $DTBO $DTB
+
+      - name: Package AnyKernel3 zip
+        run: |
+          rm -rf /tmp/ak3 && mkdir -p /tmp/ak3
+          python3 - <<'EOF'
+          import zipfile
+          z = zipfile.ZipFile('arunika/taoyao-xxksu-0810-fixed-v2.zip')
+          for n in z.namelist():
+              z.extract(n, '/tmp/ak3')
+          EOF
+          cp -v "${IMG}"  /tmp/ak3/Image
+          cp -v "${DTBO}" /tmp/ak3/dtbo.img
+          cp -v "${DTB}"  /tmp/ak3/dtb
+          chmod +x /tmp/ak3/tools/*
+          (cd /tmp/ak3 && zip -r -q -9 /tmp/taoyao-lineage-ksu.zip .)
+          ls -lh /tmp/taoyao-lineage-ksu.zip
+
+      - name: Upload flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: taoyao-lineage-ksu
+          path: |
+            /tmp/taoyao-lineage-ksu.zip
+            out/.config
+          retention-days: 14
