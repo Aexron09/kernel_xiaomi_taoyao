@@ -1377,18 +1377,20 @@ finger_pos:
 		input_report_key(dev, BTN_TOUCH, 1);
 		ts_info("BTN_TOUCH DOWN, touch num: %d", touch_num);
 		input_report_key(dev, BTN_TOOL_FINGER, 1);
-		if (global_spi_parent_device != NULL)
+		if (global_spi_parent_device != NULL) {
 			pm_runtime_set_autosuspend_delay(global_spi_parent_device, 250);
 			pm_runtime_use_autosuspend(global_spi_parent_device);
 			pm_runtime_enable(global_spi_parent_device);
+		}
 	} else if (!touch_num && pre_finger_num) {	/*last touch up */
 		input_report_key(dev, BTN_TOUCH, 0);
 		ts_info("BTN_TOUCH UP, touch num: %d", touch_num);
 		input_report_key(dev, BTN_TOOL_FINGER, 0);
-		if (global_spi_parent_device != NULL)
+		if (global_spi_parent_device != NULL) {
 			pm_runtime_set_autosuspend_delay(global_spi_parent_device, 50);
 			pm_runtime_use_autosuspend(global_spi_parent_device);
 			pm_runtime_enable(global_spi_parent_device);
+		}
 	}
 	pre_finger_num = touch_num;
 
