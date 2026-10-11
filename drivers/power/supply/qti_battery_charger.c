@@ -1721,24 +1721,46 @@ static int battery_soc_from_charge_counter(struct battery_chg_dev *bcdev,
 	if (rc < 0)
 		return fallback_soc;
 
+	charge_full = pst->prop[BATT_CHG_FULL];
+	if (!charge_full) {
+		pr_info_ratelimited(
+			"batt soc calib: invalid charge_full=%u fg_soc=%d, using fuel gauge\n",
+			charge_full, fallback_soc);
+		return fallback_soc;
+	}
+
 	rc = read_property_id(bcdev, pst, BATT_CHG_COUNTER);
 	if (rc < 0)
 		return fallback_soc;
 
-	charge_full = pst->prop[BATT_CHG_FULL];
 	charge_counter = pst->prop[BATT_CHG_COUNTER];
-
-	if (!charge_full)
+	if (!charge_counter) {
+		pr_info_ratelimited(
+			"batt soc calib: invalid charge_counter=%u full=%u fg_soc=%d, using fuel gauge\n",
+			charge_counter, charge_full, fallback_soc);
 		return fallback_soc;
+	}
 
 	/* Ignore obviously bogus values from fuel-gauge telemetry. */
-	if (charge_counter > (charge_full + (charge_full / 20)))
+	if (charge_counter > (charge_full + (charge_full / 20))) {
+		pr_info_ratelimited(
+			"batt soc calib: counter=%u exceeds full=%u fg_soc=%d, using fuel gauge\n",
+			charge_counter, charge_full, fallback_soc);
 		return fallback_soc;
+	}
 
 	calibrated_soc = DIV_ROUND_CLOSEST_ULL((u64)charge_counter * 100,
 					       charge_full);
+	calibrated_soc = clamp_t(int, calibrated_soc, 0, 100);
 
-	return clamp_t(int, calibrated_soc, 0, 100);
+	if (abs(calibrated_soc - fallback_soc) > 10) {
+		pr_info_ratelimited(
+			"batt soc calib: diverged counter=%u full=%u fg_soc=%d calibrated=%d, using fuel gauge\n",
+			charge_counter, charge_full, fallback_soc, calibrated_soc);
+		return fallback_soc;
+	}
+
+	return calibrated_soc;
 }
 
 static int battery_psy_get_prop(struct power_supply *psy,
