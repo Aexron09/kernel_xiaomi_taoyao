@@ -1706,6 +1706,42 @@ static int battery_psy_set_charge_current(struct battery_chg_dev *bcdev,
 	return rc;
 }
 
+#define SOC_SLEW_STEP_NS	(10 * NSEC_PER_SEC)
+
+static int battery_soc_slew_limit(int target)
+{
+	static DEFINE_SPINLOCK(slew_lock);
+	static bool have_last;
+	static s64 last_change_ns;
+	static int last_soc;
+	unsigned long flags;
+	s64 now, elapsed;
+	int max_step, step;
+
+	spin_lock_irqsave(&slew_lock, flags);
+	now = ktime_get_boottime_ns();
+
+	if (!have_last) {
+		last_soc = target;
+		last_change_ns = now;
+		have_last = true;
+		spin_unlock_irqrestore(&slew_lock, flags);
+		return target;
+	}
+
+	elapsed = now - last_change_ns;
+	max_step = elapsed / SOC_SLEW_STEP_NS;
+	if (max_step > 0) {
+		step = clamp_t(int, target - last_soc, -max_step, max_step);
+		last_soc += step;
+		last_change_ns = now;
+	}
+
+	spin_unlock_irqrestore(&slew_lock, flags);
+
+	return last_soc;
+}
+
 static int battery_soc_from_charge_counter(struct battery_chg_dev *bcdev,
 					      struct psy_state *pst,
 					      int fallback_soc)
@@ -1718,26 +1754,29 @@ static int battery_soc_from_charge_counter(struct battery_chg_dev *bcdev,
 
 	rc = read_property_id(bcdev, pst, BATT_CHG_FULL);
 	if (rc < 0)
-		return fallback_soc;
+		return battery_soc_slew_limit(fallback_soc);
 
 	rc = read_property_id(bcdev, pst, BATT_CHG_COUNTER);
 	if (rc < 0)
-		return fallback_soc;
+		return battery_soc_slew_limit(fallback_soc);
 
 	charge_full = pst->prop[BATT_CHG_FULL];
 	charge_counter = pst->prop[BATT_CHG_COUNTER];
 
 	if (!charge_full)
-		return fallback_soc;
+		return battery_soc_slew_limit(fallback_soc);
+
+	if (!charge_counter)
+		return battery_soc_slew_limit(fallback_soc);
 
 	/* Ignore obviously bogus values from fuel-gauge telemetry. */
 	if (charge_counter > (charge_full + (charge_full / 20)))
-		return fallback_soc;
+		return battery_soc_slew_limit(fallback_soc);
 
 	calibrated_soc = DIV_ROUND_CLOSEST_ULL((u64)charge_counter * 100,
 					       charge_full);
 
-	return clamp_t(int, calibrated_soc, 0, 100);
+	return battery_soc_slew_limit(clamp_t(int, calibrated_soc, 0, 100));
 }
 
 static int battery_psy_get_prop(struct power_supply *psy,
