@@ -649,7 +649,6 @@ static int battery_chg_write(struct battery_chg_dev *bcdev, void *data,
 					msecs_to_jiffies(BC_WAIT_TIME_MS));
 		if (!rc) {
 			pr_err("Error, timed out sending message\n");
-			mutex_unlock(&bcdev->rw_lock);
 		}
 
 		rc = 0;
