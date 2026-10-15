@@ -20,10 +20,6 @@
 
 #include "kernel_includes.h"
 
-#ifdef CONFIG_KSU_SUSFS
-#include <linux/susfs.h>
-#endif
-
 // selinux includes
 #include "avc_ss.h"
 #include "objsec.h"
@@ -273,10 +269,6 @@ static int __init kernelsu_init(void)
 
 	ksu_core_init();
 	ksu_supercalls_init();
-
-#ifdef CONFIG_KSU_SUSFS
-	susfs_init();
-#endif
 
 #if defined(CONFIG_KSU_KPROBES_KSUD) && !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE) && !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
 	kp_ksud_init();
