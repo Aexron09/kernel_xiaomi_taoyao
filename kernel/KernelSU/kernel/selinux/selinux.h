@@ -38,6 +38,19 @@ int handle_sepolicy(void __user *user_data, u64 data_len);
 
 void setup_ksu_cred();
 
+void setup_ksu_cred();
+
 void escape_to_root_for_adb_root();
+
+#ifdef CONFIG_KSU_SUSFS
+extern u32 susfs_ksu_sid;
+extern u32 susfs_priv_app_sid;
+extern u32 susfs_zygote_sid;
+extern u32 susfs_zygote_next_sid;
+
+bool susfs_is_sid_equal(const struct cred *cred, u32 sid2);
+bool susfs_is_current_ksu_domain(void);
+void susfs_set_batch_sid(void);
+#endif
 
 #endif
