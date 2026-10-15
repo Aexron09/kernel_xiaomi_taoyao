@@ -46,7 +46,7 @@ static inline void *old_kvrealloc(const void *p, size_t oldsize, size_t newsize,
 	newp = kvmalloc(newsize, flags);
 	if (!newp)
 		return nullptr;
-	__builtin_memcpy(newp, p, oldsize);
+	memcpy(newp, p, oldsize);
 	kvfree(p);
 	return newp;
 }

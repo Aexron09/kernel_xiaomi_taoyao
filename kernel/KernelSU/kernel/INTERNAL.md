@@ -5,7 +5,7 @@
 - metaprogramming is actually happening: compile-time overloading/reflection, RAII-like cleanup, template-like type trickery
 - compat and backports are also done through that metaprogramming (mostly redefinitions)
 - heavy use of compiler attributes / builtins, this is intended.
-- minimum is GCC 4.9 / Clang 10
+- minimum is GCC 4.9 / Clang 9
 
 ## build system
 - unity build, single unit
