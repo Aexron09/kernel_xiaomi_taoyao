@@ -13,6 +13,7 @@
 static u32 cached_su_sid __read_mostly = 0;
 static u32 cached_zygote_sid __read_mostly = 0;
 static u32 cached_init_sid __read_mostly = 0;
+static u32 cached_adbd_sid __read_mostly = 0;
 u32 ksu_file_sid __read_mostly = 0;
 
 static int transive_to_domain(const char *domain, struct cred *cred, bool clear_exec_sid)
@@ -149,6 +150,14 @@ void cache_sid(void)
 		pr_info("Cached init SID: %u\n", cached_init_sid);
 	}
 
+	err = security_secctx_to_secid(ADBD_CONTEXT, strlen(ADBD_CONTEXT), &cached_adbd_sid);
+	if (err) {
+		pr_warn("Failed to cache adbd SID: %d\n", err);
+		cached_adbd_sid = 0;
+	} else {
+		pr_info("Cached adbd SID: %u\n", cached_adbd_sid);
+	}
+
 	err = security_secctx_to_secid(KSU_FILE_CONTEXT, strlen(KSU_FILE_CONTEXT), &ksu_file_sid);
 	if (err) {
 		pr_warn("Failed to cache ksu_file SID: %d\n", err);
@@ -212,6 +221,11 @@ bool is_init(const struct cred *cred)
 	return is_sid_match(cred, cached_init_sid, INIT_CONTEXT);
 }
 
+bool is_adbd(const struct cred *cred)
+{
+	return is_sid_match(cred, cached_adbd_sid, ADBD_CONTEXT);
+}
+
 void escape_to_root_for_adb_root(void)
 {
 	struct cred *cred = prepare_creds();
@@ -223,7 +237,63 @@ void escape_to_root_for_adb_root(void)
 	if (transive_to_domain(KERNEL_SU_CONTEXT, cred, true)) {
 		pr_err("transive domain failed.\n");
 		abort_creds(cred);
-		return;
 	}
 	commit_creds(cred);
 }
+
+#ifdef CONFIG_KSU_SUSFS
+#define KERNEL_INIT_DOMAIN "u:r:init:s0"
+#define KERNEL_ZYGOTE_DOMAIN "u:r:zygote:s0"
+#define KERNEL_ZYGOTE_NEXT_DOMAIN "u:r:zygote_next:s0"
+#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
+
+u32 susfs_ksu_sid __read_mostly = 0;
+u32 susfs_zygote_sid __read_mostly = 0;
+u32 susfs_zygote_next_sid __read_mostly = 0;
+u32 susfs_priv_app_sid __read_mostly = 0;
+static u32 susfs_init_sid __read_mostly = 0;
+
+static inline void susfs_set_sid(const char *secctx_name, u32 *out_sid)
+{
+	int err;
+
+	if (!secctx_name || !out_sid) {
+		pr_err("secctx_name || out_sid is NULL\n");
+		return;
+	}
+
+	err = security_secctx_to_secid(secctx_name, strlen(secctx_name), out_sid);
+	if (err) {
+		pr_err("failed setting sid for '%s', err: %d\n", secctx_name, err);
+		return;
+	}
+	pr_info("sid '%u' is set for secctx_name '%s'\n", *out_sid, secctx_name);
+}
+
+bool susfs_is_sid_equal(const struct cred *cred, u32 sid2)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 0)
+	const struct task_security_struct *tsec = selinux_cred(cred);
+#else
+	const struct cred_security_struct *tsec = selinux_cred(cred);
+#endif
+	if (!tsec) {
+		return false;
+	}
+	return tsec->sid == sid2;
+}
+
+bool susfs_is_current_ksu_domain(void)
+{
+	return unlikely(current_sid() == susfs_ksu_sid);
+}
+
+void susfs_set_batch_sid(void)
+{
+	susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid);
+	susfs_set_sid(KERNEL_ZYGOTE_NEXT_DOMAIN, &susfs_zygote_next_sid);
+	susfs_set_sid(KERNEL_SU_CONTEXT, &susfs_ksu_sid);
+	susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid);
+	susfs_set_sid(KERNEL_PRIV_APP_DOMAIN, &susfs_priv_app_sid);
+}
+#endif // #ifdef CONFIG_KSU_SUSFS
