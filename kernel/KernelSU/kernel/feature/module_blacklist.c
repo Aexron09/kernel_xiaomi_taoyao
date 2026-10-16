@@ -100,7 +100,7 @@ void __init ksu_module_blacklist_init(void)
 	else
 		snprintf(combined, sizeof(combined), "%s,%s", KSU_MODULES_TO_BLOCK, block_modules);
 
-	native_blacklist = (char **)kallsyms_lookup_name("module_blacklist");
+	native_blacklist = (char **)find_kernel_symbol_exact("module_blacklist");
 	if (!native_blacklist) {
 		pr_warn("module_blacklist: symbol not found, cannot block modules\n");
 		return;

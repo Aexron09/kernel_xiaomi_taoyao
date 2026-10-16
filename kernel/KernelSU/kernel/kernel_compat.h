@@ -43,6 +43,10 @@ __weak void kick_all_cpus_sync(void)
 }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#define memzero_explicit(ptr, count) memset_explicit(ptr, 0, count)
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
 static void *ksu_kvmalloc(size_t size, gfp_t flags)
 {
@@ -62,6 +66,22 @@ static void ksu_kvfree(const void *buf)
 		kfree(buf);
 }
 #define kvfree ksu_kvfree
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+static void *ksu_kvcalloc(size_t n, size_t size, gfp_t flags)
+{
+	size_t bytes;
+	if (check_mul_overflow(n, size, &bytes))
+		return nullptr;
+
+	void *ptr = kvmalloc(bytes, flags);
+	if (ptr)
+		memzero_explicit(ptr, bytes);
+
+	return ptr;
+}
+#define kvcalloc ksu_kvcalloc
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0) // probe_kernel_read
@@ -139,10 +159,6 @@ static __always_inline long memmove_user(void __user *dst, const void __user *sr
 
 	return 0;
 }
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
-#define memzero_explicit(ptr, count) memset_explicit(ptr, 0, count)
-#endif
 
 #ifdef TIF_SECCOMP
 #define ksu_is_seccomp_enabled() test_thread_flag(TIF_SECCOMP)
@@ -267,6 +283,9 @@ struct ksu_static_key_true_false { struct static_key key; };
 
 #define DEFINE_STATIC_KEY_TRUE(name)	struct ksu_static_key_true_false name = KSU_STATIC_KEY_TRUE_INIT
 #define DEFINE_STATIC_KEY_FALSE(name)	struct ksu_static_key_true_false name = KSU_STATIC_KEY_FALSE_INIT
+
+#define static_key_enable(x)		ksu_static_key_enable(x)
+#define static_key_disable(x)		ksu_static_key_disable(x)
 
 #define static_branch_enable(x)		ksu_static_key_enable(&(x)->key)
 #define static_branch_disable(x)	ksu_static_key_disable(&(x)->key)
