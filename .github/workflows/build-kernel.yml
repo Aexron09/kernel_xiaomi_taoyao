@@ -10,6 +10,7 @@ on:
       - 'kernel/**'
       - 'techpack/**'
       - 'Kconfig'
+      - 'init/**'
       - '.gitmodules'
       - 'Makefile'
       - '.github/workflows/build-kernel.yml'
