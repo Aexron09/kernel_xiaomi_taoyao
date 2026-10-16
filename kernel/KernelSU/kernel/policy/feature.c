@@ -1,3 +1,12 @@
+#include "feature.h"
+#include "klog.h" // IWYU pragma: keep
+
+#include <linux/bitmap.h>
+#include <linux/kernel.h>
+#include <linux/moduleparam.h>
+#include <linux/string.h>
+#include <linux/mutex.h>
+
 static const struct ksu_feature_handler *feature_handlers[KSU_FEATURE_MAX];
 
 static DEFINE_MUTEX(feature_mutex);
@@ -9,13 +18,13 @@ static const char *const feature_names[KSU_FEATURE_MAX] = {
 	[KSU_FEATURE_ADB_ROOT] = "adb_root",
 	[KSU_FEATURE_SELINUX_HIDE] = "selinux_hide",
 	[KSU_FEATURE_SHELL_SU_ADB_ONLY] = "shell_su_adb_only",
+	[KSU_FEATURE_AVC_SPOOF] = "avc_spoof",
 };
 
 // Features forced by boot config. Written only while parsing module params
 // (before kernelsu_init), read-only afterwards.
 static u64 forced_values[KSU_FEATURE_MAX];
 static DECLARE_BITMAP(forced_mask, KSU_FEATURE_MAX);
-// Forced features whose value has not been applied successfully yet
 static DECLARE_BITMAP(forced_pending, KSU_FEATURE_MAX);
 
 static int parse_feature_id(const char *name, u32 *id)
@@ -52,7 +61,7 @@ static int force_feature_param_set(const char *val, const struct kernel_param *k
 		return 0;
 	}
 
-	for (; *p; p = *end ? end + 1 : end) {
+	for (; *p; p = end ? end + 1 : end) {
 		end = strchrnul(p, ',');
 		if (end == p) {
 			continue;
@@ -86,15 +95,12 @@ static int force_feature_param_set(const char *val, const struct kernel_param *k
 }
 
 static const struct kernel_param_ops force_feature_param_ops = {
-	// A bare `force_feature` would otherwise fail parse_args() and the whole module load
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0)
 	.flags = KERNEL_PARAM_OPS_FL_NOARG,
-#endif
 	.set = force_feature_param_set,
 };
 module_param_cb(force_feature, &force_feature_param_ops, NULL, 0);
 
-int __init ksu_register_feature_handler(const struct ksu_feature_handler *handler)
+int ksu_register_feature_handler(const struct ksu_feature_handler *handler)
 {
 	if (!handler) {
 		pr_err("feature: register handler is NULL\n");
@@ -114,13 +120,14 @@ int __init ksu_register_feature_handler(const struct ksu_feature_handler *handle
 	mutex_lock(&feature_mutex);
 
 	if (feature_handlers[handler->feature_id]) {
-		pr_warn("feature: handler for %u already registered, overwriting\n", handler->feature_id);
+		pr_warn("feature: handler for %u already registered, overwriting\n",
+		handler->feature_id);
 	}
 
 	feature_handlers[handler->feature_id] = handler;
 
-	pr_info("feature: registered handler for %s (id=%u)\n", handler->name ? handler->name : "unknown",
-			handler->feature_id);
+	pr_info("feature: registered handler for %s (id=%u)\n",
+		handler->name ? handler->name : "unknown", handler->feature_id);
 
 	mutex_unlock(&feature_mutex);
 	return 0;
@@ -206,11 +213,6 @@ int ksu_set_feature(u32 feature_id, u64 value)
 		return -EINVAL;
 	}
 
-	if (test_bit(feature_id, forced_mask)) {
-		pr_warn("feature: feature %u is forced by boot config\n", feature_id);
-		return -EPERM;
-	}
-
 	mutex_lock(&feature_mutex);
 
 	handler = feature_handlers[feature_id];
@@ -227,6 +229,12 @@ int ksu_set_feature(u32 feature_id, u64 value)
 		goto out;
 	}
 
+	if (test_bit(feature_id, forced_mask)) {
+		pr_warn("feature: feature %u is forced by boot config\n", feature_id);
+		ret = -EPERM;
+		goto out;
+	}
+
 	ret = handler->set_handler(value);
 	if (ret) {
 		pr_err("feature: set_handler for %u failed: %d\n", feature_id, ret);
@@ -235,38 +243,6 @@ int ksu_set_feature(u32 feature_id, u64 value)
 out:
 	mutex_unlock(&feature_mutex);
 	return ret;
-}
-
-bool ksu_feature_is_forced(u32 feature_id)
-{
-	return feature_id < KSU_FEATURE_MAX && test_bit(feature_id, forced_mask);
-}
-
-void ksu_feature_apply_forced(void)
-{
-	const struct ksu_feature_handler *handler;
-	unsigned int id;
-	int ret;
-
-	mutex_lock(&feature_mutex);
-
-	for_each_set_bit (id, forced_pending, KSU_FEATURE_MAX) {
-		handler = feature_handlers[id];
-		if (!handler || !handler->set_handler) {
-			continue;
-		}
-
-		ret = handler->set_handler(forced_values[id]);
-		if (ret) {
-			pr_warn("feature: apply forced %s=%llu failed: %d\n", feature_names[id], forced_values[id], ret);
-			continue;
-		}
-
-		clear_bit(id, forced_pending);
-		pr_info("feature: applied forced %s=%llu\n", feature_names[id], forced_values[id]);
-	}
-
-	mutex_unlock(&feature_mutex);
 }
 
 void __init ksu_feature_init(void)
@@ -293,4 +269,36 @@ void __exit ksu_feature_exit(void)
 	mutex_unlock(&feature_mutex);
 
 	pr_info("feature: feature management cleaned up\n");
+}
+
+bool ksu_feature_is_forced(u32 feature_id)
+{
+	return feature_id < KSU_FEATURE_MAX && test_bit(feature_id, forced_mask);
+}
+
+void ksu_feature_apply_forced(void)
+{
+	const struct ksu_feature_handler *handler;
+	unsigned int id;
+	int ret;
+
+	mutex_lock(&feature_mutex);
+
+	for_each_set_bit (id, forced_pending, KSU_FEATURE_MAX) {
+		handler = feature_handlers[id];
+		if (!handler || !handler->set_handler) {
+			continue;
+		}
+
+		ret = handler->set_handler(forced_values[id]);
+		if (ret) {
+			pr_warn("feature: apply forced %s=%llu failed: %d\n",
+				feature_names[id], forced_values[id], ret);
+			continue;
+		}
+
+		clear_bit(id, forced_pending);
+	}
+
+	mutex_unlock(&feature_mutex);
 }
