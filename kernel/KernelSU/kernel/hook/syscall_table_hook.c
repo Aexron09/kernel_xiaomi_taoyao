@@ -25,11 +25,16 @@
 #include "hook/syscall_table_hook.h"
 #include "hook/patch_memory.h"
 #include "infra/symbol_resolver.h"
+#include <linux/cred.h>
+#include <linux/uidgid.h>
+
 #include "policy/app_profile.h"
 #include "selinux/selinux.h"
 #include "feature/sucompat.h"
 #include "feature/adb_root.h"
 #include "runtime/ksud.h"
+#include "supercall/supercall.h"
+#include "hook/setuid_hook.h"
 
 // The pt_regs-based syscall ABI (__arm64_sys_*/__x64_sys_*) exists since 4.17
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
@@ -213,6 +218,39 @@ static long ksu_sth_newfstatat(const struct pt_regs *regs)
 }
 #endif
 
+// The supercall entry point. In kprobes mode this is reached through the
+// reboot_kp kprobe; in table-hook mode that kprobe is never installed, so
+// sys_reboot() must be routed here explicitly or the manager/ksud can never
+// obtain a driver fd and report "not integrated".
+#ifdef __NR_reboot
+static long ksu_sth_reboot(const struct pt_regs *regs)
+{
+	int magic1 = (int)PT_REGS_PARM1(regs);
+	int magic2 = (int)PT_REGS_PARM2(regs);
+	unsigned int cmd = (unsigned int)PT_REGS_PARM3(regs);
+	unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
+
+	ksu_handle_sys_reboot(magic1, magic2, cmd, (void __user **)&arg4);
+
+	return ksu_sth_call_orig(__NR_reboot, regs);
+}
+#endif
+
+// zygote calls setresuid(uid, uid, uid) when it forks an app. This is where
+// the manager gets its driver fd installed (ksu_install_fd) and where kernel
+// umount is processed - both were only wired to the sys_enter tracepoint, so
+// they must be reproduced here as well.
+#ifdef __NR_setresuid
+static long ksu_sth_setresuid(const struct pt_regs *regs)
+{
+	uid_t ruid = (uid_t)PT_REGS_PARM1(regs);
+
+	ksu_handle_setresuid(current_uid().val, ruid);
+
+	return ksu_sth_call_orig(__NR_setresuid, regs);
+}
+#endif
+
 void __init ksu_syscall_table_hook_init(void)
 {
 	struct {
@@ -230,6 +268,12 @@ void __init ksu_syscall_table_hook_init(void)
 #endif
 #ifdef __NR_newfstatat
 		{ __NR_newfstatat, ksu_sth_newfstatat },
+#endif
+#ifdef __NR_reboot
+		{ __NR_reboot, ksu_sth_reboot },
+#endif
+#ifdef __NR_setresuid
+		{ __NR_setresuid, ksu_sth_setresuid },
 #endif
 	};
 	int i, patched = 0;
